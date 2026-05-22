@@ -37,6 +37,12 @@ function src = load_dat_video(path, fmt)
     fseek(fid, fmt.headerBytes, 'bof');
     raw = fread(fid, fmt.width*fmt.height*nf, [fmt.dtype '=>' fmt.dtype]);
 
+    expected = fmt.width*fmt.height*nf;
+    if numel(raw) ~= expected
+        error('load_dat_video:truncated', ...
+            'File truncated or unreadable: expected %d pixels, read %d.', expected, numel(raw));
+    end
+
     A = reshape(raw, [fmt.width, fmt.height, nf]);
     A = permute(A, [2 1 3]);   % -> [H W N]
 
