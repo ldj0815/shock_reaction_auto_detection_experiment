@@ -1,7 +1,8 @@
 function [shockX, rxnX] = detect_fronts_in_frame(grayImg, yRows, scanDir, params)
 %DETECT_FRONTS_IN_FRAME Per-row detection of shock and reaction fronts.
 %   grayImg : HxW double grayscale image (0-255 range)
-%   yRows   : vector of row indices to scan (the calibrated chamber height)
+%   yRows   : vector of row indices to scan (the calibrated chamber height).
+%             Must be within [1, size(grayImg,1)]; out-of-range indices are not validated.
 %   scanDir : +1 to scan left->right, -1 to scan right->left
 %             (this is the REVERSE of the propagation direction)
 %   params  : struct with fields shockThresh, rxnThresh, whiteLevel, scanSmoothWin
@@ -36,7 +37,7 @@ function [shockX, rxnX] = detect_fronts_in_frame(grayImg, yRows, scanDir, params
 
         % search reaction strictly behind the shock
         gTail = g(kS+1:end);
-        vTail = v(kS+2:end);     % v(k+1) aligned to gTail
+        vTail = v(kS+2:end);     % vTail(j) = v(kS+1+j): the intensity just after each gradient in gTail
         kR = find(gTail >= params.rxnThresh & vTail >= params.whiteLevel, 1, 'first');
         if ~isempty(kR)
             kRabs = kS + kR;     % index into g
