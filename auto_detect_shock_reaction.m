@@ -1,44 +1,48 @@
 function Detection = auto_detect_shock_reaction()
-%AUTO_DETECT_SHOCK_REACTION Automatic per-row shock & reaction front detection.
-%   Returns the Detection struct (also saved as <video>_autodetect.mat).
+%AUTO_DETECT_SHOCK_REACTION Automatic per-row shock & reaction front detection
+%   on raw 16-bit .dat high-speed-camera data with in-house background removal.
+%   Returns the Detection struct (also saved as <datBase>_autodetect.mat).
 
 %% ---- USER SETTINGS ----
-frameRate      = 500000;   % Hz (from USER SETTINGS, not video.FrameRate: AVI headers are unreliable at 500 kFPS)
+frameRate      = 500000;   % Hz (from acquisition, not a video header)
 startFolder    = pwd;      % default folder for the file picker
-shockThresh    = 25;       % darkening gradient magnitude (0-255 scale)
-rxnThresh      = 25;       % brightening gradient magnitude
-whiteLevel     = 180;      % absolute intensity floor for "white" reaction
-scanSmoothWin  = 5;        % smoothing window along the scan axis
+shockThresh    = 3000;     % shock step-height (drop) in 16-bit counts over gradSpan
+rxnThresh      = 3000;     % reaction step-height (rise) in counts over gradSpan
+whiteLevel     = 0;        % min post-edge intensity for the reaction (subtracted-image counts)
+scanSmoothWin  = 3;        % denoising window along the scan axis (px)
+gradSpan       = 3;        % L: span (px) over which the step height is measured
 madTol         = 3;        % MAD multiplier for per-row outlier rejection
 ySmoothWin     = 5;        % smoothing window along y (cleaned curve)
 minValidFrac   = 0.3;      % min fraction of detected rows for a "valid" frame
 nOverlayFrames = 6;        % frames in the review montage
 
-%% ---- SELECT VIDEO ----
-[fn, fp] = uigetfile({'*.avi','AVI video'}, 'Select detonation video', startFolder);
+%% ---- SELECT .dat ----
+[fn, fp] = uigetfile({'*.dat','Raw camera .dat'}, 'Select raw detonation .dat', startFolder);
 if isequal(fn,0), disp('Cancelled.'); Detection = []; return; end
-video = VideoReader(fullfile(fp, fn));
-totalFrames = video.NumFrames;
+src = load_dat_video(fullfile(fp, fn));
+totalFrames = src.NumFrames;
 
 %% ---- SETUP GUI ----
-setup = setup_detection_gui(video, round(totalFrames/2));
+setup = setup_detection_gui(src, round(totalFrames/2));
 if isempty(setup), disp('Setup cancelled.'); Detection = []; return; end
 
+backRef = dat_frame(src, setup.backgroundFrame);
+
 params = struct('shockThresh',shockThresh,'rxnThresh',rxnThresh, ...
-    'whiteLevel',whiteLevel,'scanSmoothWin',scanSmoothWin);
+    'whiteLevel',whiteLevel,'scanSmoothWin',scanSmoothWin,'gradSpan',gradSpan);
 
 %% ---- TUNING PREVIEW LOOP ----
-calibImg  = read(video, setup.calibFrame);
-calibGray = toGray(calibImg);
+calibProc = dat_frame(src, setup.calibFrame) - backRef;
 accepted = false;
 while ~accepted
-    [sx, rx] = detect_fronts_in_frame(calibGray, setup.yRows, setup.scanDir, params);
+    [sx, rx] = detect_fronts_in_frame(calibProc, setup.yRows, setup.scanDir, params);
     hPrev   = figure('Name','Tuning Preview','NumberTitle','off','Color','w');
     hPrevAx = axes(hPrev);
-    imshow(calibImg, 'Parent', hPrevAx); hold(hPrevAx,'on');
+    imshow(calibProc, [], 'Parent', hPrevAx); hold(hPrevAx,'on');
     overlay_fronts(hPrevAx, setup.yRows(:), sx, rx);
-    title(hPrevAx, sprintf('shockThresh=%.0f  rxnThresh=%.0f  whiteLevel=%.0f  scanSmoothWin=%.0f', ...
-        params.shockThresh, params.rxnThresh, params.whiteLevel, params.scanSmoothWin));
+    title(hPrevAx, sprintf(['shockThresh=%.0f  rxnThresh=%.0f  whiteLevel=%.0f  ' ...
+        'scanSmoothWin=%.0f  gradSpan=%.0f'], params.shockThresh, params.rxnThresh, ...
+        params.whiteLevel, params.scanSmoothWin, params.gradSpan));
     drawnow;
     choice = questdlg('Accept these detection thresholds?','Tuning', ...
         'Accept','Adjust','Cancel','Accept');
@@ -46,20 +50,20 @@ while ~accepted
         case 'Accept'
             accepted = true; if ishandle(hPrev), close(hPrev); end
         case 'Adjust'
-            answer = inputdlg({'shockThresh','rxnThresh','whiteLevel','scanSmoothWin'}, ...
+            answer = inputdlg({'shockThresh','rxnThresh','whiteLevel','scanSmoothWin','gradSpan'}, ...
                 'Adjust thresholds', [1 30], ...
                 {num2str(params.shockThresh), num2str(params.rxnThresh), ...
-                 num2str(params.whiteLevel), num2str(params.scanSmoothWin)});
+                 num2str(params.whiteLevel), num2str(params.scanSmoothWin), num2str(params.gradSpan)});
             if ~isempty(answer)
                 vals = cellfun(@str2double, answer);
-                if all(isfinite(vals) & vals > 0)
+                if all(isfinite(vals))
                     params.shockThresh   = vals(1);
                     params.rxnThresh     = vals(2);
                     params.whiteLevel    = vals(3);
-                    params.scanSmoothWin = round(vals(4));
+                    params.scanSmoothWin = vals(4);
+                    params.gradSpan      = vals(5);
                 else
-                    warndlg('All values must be positive numbers. Thresholds unchanged.', ...
-                        'Invalid input');
+                    warndlg('All values must be numbers. Thresholds unchanged.','Invalid input');
                 end
             end
             if ishandle(hPrev), close(hPrev); end
@@ -82,8 +86,8 @@ valid        = false(1, N);
 
 fprintf('Processing %d frames (%d to %d)...\n', N, setup.startFrame, setup.endFrame);
 for k = 1:N
-    g = toGray(read(video, frames(k)));
-    [sx, rx] = detect_fronts_in_frame(g, setup.yRows, setup.scanDir, params);
+    proc = dat_frame(src, frames(k)) - backRef;
+    [sx, rx] = detect_fronts_in_frame(proc, setup.yRows, setup.scanDir, params);
     shockX_raw(:,k)   = sx;
     rxnX_raw(:,k)     = rx;
     shockX_clean(:,k) = clean_front_line(sx, madTol, ySmoothWin);
@@ -94,16 +98,19 @@ fprintf('Done. %d/%d frames valid.\n', sum(valid), N);
 
 %% ---- BUILD STRUCT ----
 Detection.video = struct('fileName',fn,'filePath',fp,'frameRate',frameRate, ...
-    'width',video.Width,'height',video.Height,'totalFrames',totalFrames);
+    'width',src.Width,'height',src.Height,'totalFrames',totalFrames);
+Detection.datFormat   = src.fmt;
 Detection.calibration = struct('chamberWidth_in',setup.chamberWidth_in, ...
     'pixelHeight',setup.pixelHeight,'mperpix',setup.mperpix, ...
     'yTop',setup.yTop,'yBottom',setup.yBottom,'yPixels',setup.yRows(:), ...
     'calibFrame',setup.calibFrame);
+Detection.backgroundFrame      = setup.backgroundFrame;
 Detection.propagationDirection = setup.propagationDirection;
 Detection.scanDirection        = setup.scanDir;
 Detection.thresholds = struct('shockThresh',params.shockThresh,'rxnThresh',params.rxnThresh, ...
     'whiteLevel',params.whiteLevel,'scanSmoothWin',params.scanSmoothWin, ...
-    'madTol',madTol,'ySmoothWin',ySmoothWin,'minValidFrac',minValidFrac);
+    'gradSpan',params.gradSpan,'madTol',madTol,'ySmoothWin',ySmoothWin, ...
+    'minValidFrac',minValidFrac);
 Detection.frameRange   = [setup.startFrame setup.endFrame];
 Detection.frames       = frames;
 Detection.shockX_raw   = shockX_raw;
@@ -126,7 +133,7 @@ tlo = tiledlayout(hRev,'flow','TileSpacing','compact','Padding','compact');
 for j = 1:numel(idx)
     k  = idx(j);
     ax = nexttile(tlo);
-    imshow(read(video, frames(k)),'Parent',ax); hold(ax,'on');
+    imshow(dat_frame(src, frames(k)) - backRef, [], 'Parent', ax); hold(ax,'on');
     overlay_fronts(ax, setup.yRows(:), shockX_clean(:,k), rxnX_clean(:,k));
     title(ax, sprintf('Frame %d%s', frames(k), tern(valid(k),'',' (low conf.)')));
 end
@@ -138,14 +145,6 @@ fprintf('Review figure saved.\n');
 end
 
 %% ===== local helpers =====
-function g = toGray(f)
-    if size(f,3) == 3
-        g = double(rgb2gray(f));
-    else
-        g = double(f);
-    end
-end
-
 function s = tern(cond, a, b)
     if cond, s = a; else, s = b; end
 end
