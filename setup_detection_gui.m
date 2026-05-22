@@ -1,13 +1,13 @@
-function setup = setup_detection_gui(video, defaultFrame)
-%SETUP_DETECTION_GUI Collect direction, vertical width calibration, frame range.
-%   video        : VideoReader object
+function setup = setup_detection_gui(src, defaultFrame)
+%SETUP_DETECTION_GUI Collect direction, width calibration, background, frame range.
+%   src          : frame source from load_dat_video (fields Width/Height/NumFrames)
 %   defaultFrame : frame to show initially (default: middle frame)
 %   setup        : struct, or [] if cancelled. Fields:
 %     propagationDirection ('LtoR'|'RtoL'), scanDir (+1|-1),
 %     calibFrame, yTop, yBottom, pixelHeight, yRows, chamberWidth_in,
-%     mperpix, startFrame, endFrame
+%     mperpix, backgroundFrame, startFrame, endFrame
     setup = [];
-    totalFrames = video.NumFrames;
+    totalFrames = src.NumFrames;
     if nargin < 2 || isempty(defaultFrame)
         defaultFrame = round(totalFrames/2);
     end
@@ -15,7 +15,7 @@ function setup = setup_detection_gui(video, defaultFrame)
 
     % --- state shared with callbacks ---
     yTop = []; yBottom = []; calibFrame = [];
-    startFrame = []; endFrame = []; chamberWidth_in = [];
+    startFrame = []; endFrame = []; chamberWidth_in = []; backIdx = [];
     calibMode = false; calibClicks = [];
     doneFlag = false; cancelled = false;
     hCalibLines = gobjects(0);
@@ -24,7 +24,7 @@ function setup = setup_detection_gui(video, defaultFrame)
         'WindowState','maximized','Color','w','CloseRequestFcn',@cbClose);
     hAx = axes('Parent',hFig,'Units','normalized','Position',[0.02 0.20 0.96 0.78]);
     axis(hAx,'off');
-    hImg = imshow(read(video, frameNumber), 'Parent', hAx);
+    hImg = imshow(dat_frame(src,frameNumber), [], 'Parent', hAx);
     hold(hAx,'on');
 
     % green full-screen crosshair cursor
@@ -38,24 +38,26 @@ function setup = setup_detection_gui(video, defaultFrame)
         'Units','normalized','Position',[0.09 0.115 0.14 0.045],'FontSize',10);
 
     uicontrol(hFig,'Style','pushbutton','String','< Prev','Units','normalized', ...
-        'Position',[0.02 0.04 0.07 0.05],'Callback',@(s,e) changeFrame(-1));
+        'Position',[0.02 0.04 0.06 0.05],'Callback',@(s,e) changeFrame(-1));
     uicontrol(hFig,'Style','pushbutton','String','Next >','Units','normalized', ...
-        'Position',[0.10 0.04 0.07 0.05],'Callback',@(s,e) changeFrame(1));
+        'Position',[0.09 0.04 0.06 0.05],'Callback',@(s,e) changeFrame(1));
     uicontrol(hFig,'Style','pushbutton','String','<< -10','Units','normalized', ...
-        'Position',[0.18 0.04 0.07 0.05],'Callback',@(s,e) changeFrame(-10));
+        'Position',[0.16 0.04 0.06 0.05],'Callback',@(s,e) changeFrame(-10));
     uicontrol(hFig,'Style','pushbutton','String','+10 >>','Units','normalized', ...
-        'Position',[0.26 0.04 0.07 0.05],'Callback',@(s,e) changeFrame(10));
+        'Position',[0.23 0.04 0.06 0.05],'Callback',@(s,e) changeFrame(10));
     uicontrol(hFig,'Style','pushbutton','String','Set Start','Units','normalized', ...
-        'Position',[0.36 0.04 0.10 0.05],'Callback',@cbSetStart);
+        'Position',[0.34 0.04 0.075 0.05],'Callback',@cbSetStart);
     uicontrol(hFig,'Style','pushbutton','String','Set End','Units','normalized', ...
-        'Position',[0.47 0.04 0.10 0.05],'Callback',@cbSetEnd);
+        'Position',[0.42 0.04 0.075 0.05],'Callback',@cbSetEnd);
+    uicontrol(hFig,'Style','pushbutton','String','Set Background','Units','normalized', ...
+        'Position',[0.50 0.04 0.10 0.05],'Callback',@cbSetBackground);
     uicontrol(hFig,'Style','pushbutton','String','Calibrate Width (2 clicks)', ...
-        'Units','normalized','Position',[0.58 0.04 0.18 0.05],'Callback',@cbCalibrate);
+        'Units','normalized','Position',[0.61 0.04 0.16 0.05],'Callback',@cbCalibrate);
     uicontrol(hFig,'Style','pushbutton','String','DONE','Units','normalized', ...
         'Position',[0.86 0.04 0.10 0.05],'FontWeight','bold','Callback',@cbDone);
 
     hStatus = uicontrol(hFig,'Style','text','Units','normalized', ...
-        'Position',[0.36 0.105 0.60 0.04],'BackgroundColor','w','FontSize',9, ...
+        'Position',[0.34 0.105 0.62 0.04],'BackgroundColor','w','FontSize',9, ...
         'HorizontalAlignment','left','String','');
 
     set(hImg,'ButtonDownFcn',@cbClick,'HitTest','on','PickableParts','all');
@@ -79,9 +81,10 @@ function setup = setup_detection_gui(video, defaultFrame)
     setup.yBottom         = max(yTop, yBottom);
     setup.pixelHeight     = abs(yBottom - yTop);
     setup.yRows           = round(setup.yTop):round(setup.yBottom);
-    setup.yRows = setup.yRows(setup.yRows >= 1 & setup.yRows <= video.Height);
+    setup.yRows           = setup.yRows(setup.yRows >= 1 & setup.yRows <= src.Height);
     setup.chamberWidth_in = chamberWidth_in;
     setup.mperpix         = (chamberWidth_in * 0.0254) / setup.pixelHeight;
+    setup.backgroundFrame = backIdx;
     setup.startFrame      = startFrame;
     setup.endFrame        = endFrame;
 
@@ -90,12 +93,17 @@ function setup = setup_detection_gui(video, defaultFrame)
     % ---------- nested callbacks ----------
     function changeFrame(d)
         frameNumber = max(1, min(totalFrames, frameNumber + d));
-        set(hImg,'CData', read(video, frameNumber));
+        fr = dat_frame(src, frameNumber);
+        set(hImg, 'CData', fr);
+        lo = min(fr(:)); hi = max(fr(:));
+        if hi <= lo, hi = lo + 1; end
+        set(hAx, 'CLim', [lo hi]);
         drawnow limitrate;
         refreshStatus();
     end
     function cbSetStart(~,~), startFrame = frameNumber; refreshStatus(); end
     function cbSetEnd(~,~),   endFrame   = frameNumber; refreshStatus(); end
+    function cbSetBackground(~,~), backIdx = frameNumber; refreshStatus(); end
     function cbCalibrate(~,~)
         calibMode = true; calibClicks = [];
         delete(hCalibLines(ishandle(hCalibLines))); hCalibLines = gobjects(0);
@@ -110,7 +118,6 @@ function setup = setup_detection_gui(video, defaultFrame)
         hCalibLines(end+1) = plot(hAx, get(hAx,'XLim'), [yClick yClick], ...
             'y-', 'LineWidth', 1.2, 'HitTest','off','PickableParts','none'); %#ok<AGROW>
         if numel(calibClicks) == 2
-            calibMode = false;
             yTop = calibClicks(1); yBottom = calibClicks(2);
             calibFrame = frameNumber;
             answer = inputdlg('Actual chamber width (inches):','Chamber Width', ...
@@ -127,6 +134,7 @@ function setup = setup_detection_gui(video, defaultFrame)
             else
                 chamberWidth_in = w;
             end
+            calibMode = false;
             refreshStatus();
         end
     end
@@ -136,6 +144,9 @@ function setup = setup_detection_gui(video, defaultFrame)
         end
         if abs(yBottom - yTop) < 1
             set(hStatus,'String','ERROR: calibration clicks too close — recalibrate.'); return;
+        end
+        if isempty(backIdx)
+            set(hStatus,'String','ERROR: set a background frame first.'); return;
         end
         if isempty(startFrame) || isempty(endFrame)
             set(hStatus,'String','ERROR: set start and end frames.'); return;
@@ -148,9 +159,10 @@ function setup = setup_detection_gui(video, defaultFrame)
     function cbClose(~,~), cancelled = true; doneFlag = false; uiresume(hFig); end
     function refreshStatus()
         set(hStatus,'String', sprintf( ...
-            'Frame %d/%d  |  Start: %s  End: %s  |  yTop: %s  yBot: %s  Width(in): %s', ...
+            ['Frame %d/%d  |  Start: %s  End: %s  Bg: %s  |  ' ...
+             'yTop: %s  yBot: %s  Width(in): %s'], ...
             frameNumber, totalFrames, num2str(startFrame), num2str(endFrame), ...
-            num2str(yTop), num2str(yBottom), num2str(chamberWidth_in)));
+            num2str(backIdx), num2str(yTop), num2str(yBottom), num2str(chamberWidth_in)));
     end
 
     % ---------- crosshair helpers (adapted from wave_speed_gui_v16) ----------
