@@ -2,59 +2,72 @@ function tests = test_detect_fronts_in_frame
 tests = functiontests(localfunctions);
 end
 
-function img = makeFrame()
-    % H x W grayscale (double, 0-255), constant down each column
-    W = 100; H = 20;
-    rowProfile = zeros(1, W);
-    rowProfile(1:19)   = 150;
-    rowProfile(20:49)  = 250;   % reaction zone (white)
-    rowProfile(50:79)  = 80;    % post-shock (dark)
-    rowProfile(80:100) = 200;   % unburned ahead (bright)
-    img = repmat(rowProfile, H, 1);
-end
-
 function p = params(varargin)
-    p = struct('shockThresh',40,'rxnThresh',50,'whiteLevel',200,'scanSmoothWin',1);
+    % defaults; gradSpan (L) and step-height thresholds in intensity counts
+    p = struct('shockThresh',300,'rxnThresh',300,'whiteLevel',800, ...
+               'scanSmoothWin',1,'gradSpan',1);
     for k = 1:2:numel(varargin), p.(varargin{k}) = varargin{k+1}; end
 end
 
+function img = makeFrame()
+    % H x W, constant down each column.  x = column (1..100):
+    %  [1..19]=500 (burned), [20..49]=900 (reaction/white),
+    %  [50..79]=200 (post-shock dark), [80..100]=600 (unburned ahead)
+    W = 100; H = 20;
+    rp = zeros(1,W);
+    rp(1:19)   = 500;
+    rp(20:49)  = 900;
+    rp(50:79)  = 200;
+    rp(80:100) = 600;
+    img = repmat(rp, H, 1);
+end
+
 function test_scan_right_to_left(t)
-    % propagation L->R => leading edge right => scanDir = -1
-    img = makeFrame();
-    yRows = 5:15;
-    [sx, rx] = detect_fronts_in_frame(img, yRows, -1, params());
-    % shock at the 200->80 boundary (x ~ 79); reaction at 80->250 (x ~ 49)
-    verifyEqual(t, numel(sx), numel(yRows));
+    % propagation L->R => scanDir = -1; shock at 600->200 (x~79),
+    % reaction at 200->900 (x~49)
+    [sx, rx] = detect_fronts_in_frame(makeFrame(), 5:15, -1, params());
+    verifyEqual(t, numel(sx), 11);
     verifyTrue(t, all(abs(sx - 79) <= 1));
     verifyTrue(t, all(abs(rx - 49) <= 1));
 end
 
 function test_scan_left_to_right(t)
-    % mirror layout: leading edge on the left, scanDir = +1
-    W = 100; H = 20;
-    rp = zeros(1,W);
-    rp(1:20)   = 200;   % unburned ahead (bright)
-    rp(21:50)  = 80;    % post-shock (dark)
-    rp(51:80)  = 250;   % reaction (white)
-    rp(81:100) = 150;
+    W = 100; H = 20; rp = zeros(1,W);
+    rp(1:20)=600; rp(21:50)=200; rp(51:80)=900; rp(81:100)=500;
     img = repmat(rp, H, 1);
-    yRows = 5:15;
-    [sx, rx] = detect_fronts_in_frame(img, yRows, +1, params());
+    [sx, rx] = detect_fronts_in_frame(img, 5:15, +1, params());
     verifyTrue(t, all(abs(sx - 21) <= 1));
     verifyTrue(t, all(abs(rx - 51) <= 1));
 end
 
 function test_no_shock_returns_nan(t)
-    img = makeFrame();
-    [sx, rx] = detect_fronts_in_frame(img, 5:15, -1, params('shockThresh',300));
+    [sx, rx] = detect_fronts_in_frame(makeFrame(), 5:15, -1, params('shockThresh',100000));
     verifyTrue(t, all(isnan(sx)));
-    verifyTrue(t, all(isnan(rx)));  % no reaction without a shock
+    verifyTrue(t, all(isnan(rx)));
 end
 
 function test_reaction_needs_white_level(t)
-    img = makeFrame();
-    % reaction zone is 250; require >300 so it cannot qualify as "white"
-    [sx, rx] = detect_fronts_in_frame(img, 5:15, -1, params('whiteLevel',300));
-    verifyTrue(t, all(abs(sx - 79) <= 1));  % shock still found
-    verifyTrue(t, all(isnan(rx)));          % reaction rejected
+    % reaction zone is 900; require >1000 so it cannot qualify as white
+    [sx, rx] = detect_fronts_in_frame(makeFrame(), 5:15, -1, params('whiteLevel',1000));
+    verifyTrue(t, all(abs(sx - 79) <= 1));
+    verifyTrue(t, all(isnan(rx)));
+end
+
+function test_threshold_decoupled_from_smoothing(t)
+    % A single-pixel 400-count drop at x=59->60 (scanDir +1).
+    % With the SAME shockThresh and gradSpan>=smoothing, win=1 and win=5
+    % must detect the SAME edge.  (A per-pixel-diff detector would miss
+    % win=5 because the slope is smeared to ~80/px < threshold.)
+    W = 100; H = 10; rp = zeros(1,W);
+    rp(1:59) = 600; rp(60:100) = 200;
+    img = repmat(rp, H, 1);
+    pr = params('shockThresh',300,'rxnThresh',100000,'gradSpan',5);
+
+    [s1, ~] = detect_fronts_in_frame(img, 3:8, +1, setfield(pr,'scanSmoothWin',1)); %#ok<SFLD>
+    [s5, ~] = detect_fronts_in_frame(img, 3:8, +1, setfield(pr,'scanSmoothWin',5)); %#ok<SFLD>
+
+    verifyFalse(t, any(isnan(s1)));      % detected at win=1
+    verifyFalse(t, any(isnan(s5)));      % STILL detected at win=5
+    verifyTrue(t, all(abs(s1 - 60) <= 1));
+    verifyTrue(t, all(abs(s5 - s1) <= 3));
 end
