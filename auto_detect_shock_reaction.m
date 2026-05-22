@@ -28,14 +28,16 @@ params = struct('shockThresh',shockThresh,'rxnThresh',rxnThresh, ...
     'whiteLevel',whiteLevel,'scanSmoothWin',scanSmoothWin);
 
 %% ---- TUNING PREVIEW LOOP ----
-calibGray = toGray(read(video, setup.calibFrame));
+calibImg  = read(video, setup.calibFrame);
+calibGray = toGray(calibImg);
 accepted = false;
 while ~accepted
     [sx, rx] = detect_fronts_in_frame(calibGray, setup.yRows, setup.scanDir, params);
-    hPrev = figure('Name','Tuning Preview','NumberTitle','off','Color','w');
-    imshow(read(video, setup.calibFrame)); hold on;
-    overlay_fronts(gca, setup.yRows(:), sx, rx);
-    title(sprintf('shockThresh=%.0f  rxnThresh=%.0f  whiteLevel=%.0f  scanSmoothWin=%.0f', ...
+    hPrev   = figure('Name','Tuning Preview','NumberTitle','off','Color','w');
+    hPrevAx = axes(hPrev);
+    imshow(calibImg, 'Parent', hPrevAx); hold(hPrevAx,'on');
+    overlay_fronts(hPrevAx, setup.yRows(:), sx, rx);
+    title(hPrevAx, sprintf('shockThresh=%.0f  rxnThresh=%.0f  whiteLevel=%.0f  scanSmoothWin=%.0f', ...
         params.shockThresh, params.rxnThresh, params.whiteLevel, params.scanSmoothWin));
     drawnow;
     choice = questdlg('Accept these detection thresholds?','Tuning', ...
@@ -49,10 +51,16 @@ while ~accepted
                 {num2str(params.shockThresh), num2str(params.rxnThresh), ...
                  num2str(params.whiteLevel), num2str(params.scanSmoothWin)});
             if ~isempty(answer)
-                params.shockThresh   = str2double(answer{1});
-                params.rxnThresh     = str2double(answer{2});
-                params.whiteLevel    = str2double(answer{3});
-                params.scanSmoothWin = str2double(answer{4});
+                vals = cellfun(@str2double, answer);
+                if all(isfinite(vals) & vals > 0)
+                    params.shockThresh   = vals(1);
+                    params.rxnThresh     = vals(2);
+                    params.whiteLevel    = vals(3);
+                    params.scanSmoothWin = round(vals(4));
+                else
+                    warndlg('All values must be positive numbers. Thresholds unchanged.', ...
+                        'Invalid input');
+                end
             end
             if ishandle(hPrev), close(hPrev); end
         otherwise
