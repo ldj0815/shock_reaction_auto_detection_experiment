@@ -3,7 +3,7 @@ function Detection = auto_detect_shock_reaction()
 %   Returns the Detection struct (also saved as <video>_autodetect.mat).
 
 %% ---- USER SETTINGS ----
-frameRate      = 500000;   % Hz (video frame rate)
+frameRate      = 500000;   % Hz (from USER SETTINGS, not video.FrameRate: AVI headers are unreliable at 500 kFPS)
 startFolder    = pwd;      % default folder for the file picker
 shockThresh    = 25;       % darkening gradient magnitude (0-255 scale)
 rxnThresh      = 25;       % brightening gradient magnitude

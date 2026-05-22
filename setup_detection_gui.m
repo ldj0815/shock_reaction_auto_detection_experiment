@@ -134,6 +134,9 @@ function setup = setup_detection_gui(video, defaultFrame)
         if isempty(yTop) || isempty(chamberWidth_in)
             set(hStatus,'String','ERROR: calibrate width first.'); return;
         end
+        if abs(yBottom - yTop) < 1
+            set(hStatus,'String','ERROR: calibration clicks too close — recalibrate.'); return;
+        end
         if isempty(startFrame) || isempty(endFrame)
             set(hStatus,'String','ERROR: set start and end frames.'); return;
         end
