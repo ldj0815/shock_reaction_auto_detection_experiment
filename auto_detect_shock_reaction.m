@@ -8,7 +8,7 @@ frameRate      = 500000;   % Hz (from acquisition, not a video header)
 startFolder    = pwd;      % default folder for the file picker
 shockThresh    = 3000;     % shock step-height (drop) in 16-bit counts over gradSpan
 rxnThresh      = 3000;     % reaction step-height (rise) in counts over gradSpan
-whiteLevel     = 0;        % min post-edge intensity for the reaction (subtracted-image counts)
+whiteLevel     = 0;        % min post-edge intensity for the reaction, in BACKGROUND-SUBTRACTED counts (0 = accept any brightness >= background; raise to require a stronger glow)
 scanSmoothWin  = 3;        % denoising window along the scan axis (px)
 gradSpan       = 3;        % L: span (px) over which the step height is measured
 madTol         = 3;        % MAD multiplier for per-row outlier rejection
@@ -60,8 +60,8 @@ while ~accepted
                     params.shockThresh   = vals(1);
                     params.rxnThresh     = vals(2);
                     params.whiteLevel    = vals(3);
-                    params.scanSmoothWin = vals(4);
-                    params.gradSpan      = vals(5);
+                    params.scanSmoothWin = round(vals(4));
+                    params.gradSpan      = round(vals(5));
                 else
                     warndlg('All values must be numbers. Thresholds unchanged.','Invalid input');
                 end
