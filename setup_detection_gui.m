@@ -79,6 +79,7 @@ function setup = setup_detection_gui(video, defaultFrame)
     setup.yBottom         = max(yTop, yBottom);
     setup.pixelHeight     = abs(yBottom - yTop);
     setup.yRows           = round(setup.yTop):round(setup.yBottom);
+    setup.yRows = setup.yRows(setup.yRows >= 1 & setup.yRows <= video.Height);
     setup.chamberWidth_in = chamberWidth_in;
     setup.mperpix         = (chamberWidth_in * 0.0254) / setup.pixelHeight;
     setup.startFrame      = startFrame;
@@ -90,6 +91,7 @@ function setup = setup_detection_gui(video, defaultFrame)
     function changeFrame(d)
         frameNumber = max(1, min(totalFrames, frameNumber + d));
         set(hImg,'CData', read(video, frameNumber));
+        drawnow limitrate;
         refreshStatus();
     end
     function cbSetStart(~,~), startFrame = frameNumber; refreshStatus(); end
@@ -113,12 +115,17 @@ function setup = setup_detection_gui(video, defaultFrame)
             calibFrame = frameNumber;
             answer = inputdlg('Actual chamber width (inches):','Chamber Width', ...
                 [1 40], {'2'});
-            if isempty(answer) || isnan(str2double(answer{1}))
+            if isempty(answer)
+                w = NaN;
+            else
+                w = str2double(answer{1});
+            end
+            if ~isfinite(w) || w <= 0
                 yTop = []; yBottom = []; calibFrame = [];
                 delete(hCalibLines(ishandle(hCalibLines))); hCalibLines = gobjects(0);
                 set(hStatus,'String','Calibration cancelled — click Calibrate again.');
             else
-                chamberWidth_in = str2double(answer{1});
+                chamberWidth_in = w;
             end
             refreshStatus();
         end
