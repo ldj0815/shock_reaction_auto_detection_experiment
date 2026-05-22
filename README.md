@@ -142,7 +142,7 @@ as your data when tuning.
 matlab -batch "addpath(pwd); r = runtests('tests'); disp(r); assert(all([r.Passed]))"
 ```
 
-All 8 tests should pass.
+All 12 tests should pass.
 
 ## Notes & limitations
 
