@@ -106,7 +106,7 @@ as your data when tuning.
   |---|---|
   | `video` | `fileName`, `filePath`, `frameRate`, `width`, `height`, `totalFrames` |
   | `datFormat` | raw `.dat` layout constants (`headerBytes`, `width`, `height`, `dtype`, `byteOrder`) |
-  | `backgroundFrame` | the pre-detonation frame (double, 16-bit counts) subtracted before detection |
+  | `backgroundFrame` | frame **index** (integer) of the pre-detonation background that was subtracted before detection; reload the pixels with `dat_frame(load_dat_video(fullfile(Detection.video.filePath, Detection.video.fileName)), Detection.backgroundFrame)` |
   | `calibration` | `chamberWidth_in`, `pixelHeight`, `mperpix`, `yTop`, `yBottom`, `yPixels`, `calibFrame` |
   | `propagationDirection` | `'LtoR'` or `'RtoL'` |
   | `scanDirection` | `+1` (L→R scan) or `−1` (R→L scan) |
