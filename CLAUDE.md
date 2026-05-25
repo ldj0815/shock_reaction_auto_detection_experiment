@@ -19,11 +19,18 @@ of the new pipeline).
 
 ```
 auto_detect_shock_reaction.m   (orchestrator: the only entry point)
+   │                            branches on setup.detectorMode:
+   │                              'band2d' (default) → 2D gradient-band pipeline
+   │                              'step1d' (legacy)  → 1D step-height pipeline
    │
    ├─ load_dat_video.m         → reads raw .dat → `src` struct (Width/Height/NumFrames/Data/fmt)
    ├─ dat_frame.m              → src + index → one 2-D double frame
-   ├─ setup_detection_gui.m    → returns `setup` struct (direction, calibration, background, frame range)
-   ├─ detect_fronts_in_frame.m → per-row front detection (PURE)
+   ├─ setup_detection_gui.m    → returns `setup` struct (direction, detectorMode, ROI, calibration, background, frame range)
+   ├─ auto_roi_mask.m          → background-subtracted frame → roiMask, roiClipLeft, roiClipRight (PURE)
+   ├─ edge_map_2d.m            → frame → gradient magnitude map (PURE)
+   ├─ detect_bands_in_frame.m  → per-row detection via 2D gradient bands (PURE)
+   ├─ temporal_prior_refine.m  → refines raw front curve using cleaned previous-frame curve (PURE)
+   ├─ detect_fronts_in_frame.m → per-row detection via 1D step-height (PURE, legacy mode)
    ├─ clean_front_line.m       → outlier rejection + smoothing of one front curve (PURE)
    └─ overlay_fronts.m         → draws shock(red)/reaction(cyan) on an axes
 ```
@@ -31,17 +38,27 @@ auto_detect_shock_reaction.m   (orchestrator: the only entry point)
 `VideoReader`/AVI was removed; all frame I/O goes through `load_dat_video` +
 `dat_frame`.
 
-The **two pure functions** (`detect_fronts_in_frame`, `clean_front_line`) hold the
-core logic and are the only unit-tested pieces. Keep them pure (no GUI, no file
-I/O, no `figure`/`imshow`) so they stay testable. The GUI and orchestrator can't
-run headless (they need a display), so logic worth testing belongs in a pure
+The **pure functions** (`detect_bands_in_frame`, `detect_fronts_in_frame`,
+`auto_roi_mask`, `edge_map_2d`, `temporal_prior_refine`, `clean_front_line`) hold
+the core logic and are the only unit-tested pieces. Keep them pure (no GUI, no
+file I/O, no `figure`/`imshow`) so they stay testable. The GUI and orchestrator
+can't run headless (they need a display), so logic worth testing belongs in a pure
 function, not in them.
 
 ## Key conventions (do not break these silently)
 
+- **Detector mode** is chosen in the setup GUI (`band2d`/`step1d`). In `band2d`:
+  detection runs on a Gmag strong-edge mask intersected with `roiMask`, split into
+  a dark-region shock band and a bright-region reaction band, and the per-row
+  interface is the **leading band pixel in `scanDir`**.
+- **Temporal prior** uses the *cleaned* previous-frame curve as the prediction
+  basis (prevents spike propagation). Default: shock-on (`useShockPrior=true`),
+  reaction-off (`useRxnPrior=false`). The prior is applied **in the batch run
+  only**, not in the tuning preview — tuning shows raw per-frame behavior.
 - **`scanDir` is the reverse of propagation.** Propagation L→R ⇒ `scanDir = -1`
   (scan right-to-left from the leading edge); R→L ⇒ `scanDir = +1`. This mapping
-  lives in `setup_detection_gui.m` and is consumed by `detect_fronts_in_frame.m`.
+  lives in `setup_detection_gui.m` and is consumed by `detect_fronts_in_frame.m`
+  and `detect_bands_in_frame.m`.
 - **Detection order:** scanning from the leading edge, the **shock is found first**
   (first darkening), the **reaction front behind it** (first jump to white). If no
   shock is found in a row, both fronts are `NaN` for that row.
@@ -69,31 +86,40 @@ function, not in them.
 
 `setup_detection_gui` returns (or `[]` if cancelled): `propagationDirection`,
 `scanDir`, `calibFrame`, `yTop`, `yBottom`, `pixelHeight`, `yRows`,
-`chamberWidth_in`, `mperpix`, `startFrame`, `endFrame`, `backgroundFrame`. If you
-add/rename a field, update both the GUI and `auto_detect_shock_reaction.m`.
+`chamberWidth_in`, `mperpix`, `startFrame`, `endFrame`, `backgroundFrame`,
+`detectorMode`, `roiMask`, `roiClipLeft`, `roiClipRight`. If you add/rename a
+field, update both the GUI and `auto_detect_shock_reaction.m`.
 
 ## The `Detection` struct (saved output contract)
 
 Top-level fields: `video`, `datFormat`, `backgroundFrame`, `calibration`,
-`propagationDirection`, `scanDirection`, `thresholds`, `frameRange`, `frames`,
-`shockX_raw`, `shockX_clean`, `rxnX_raw`, `rxnX_clean`, `valid`. The
-`*_raw`/`*_clean` matrices are `[numRows × N]` in pixels. `thresholds` now
-includes `gradSpan`. **Downstream code reads this file** — treat field names and
-shapes as a stable contract; if you change them, note it prominently (it's a
-breaking change for any analysis script that loads the `.mat`).
+`propagationDirection`, `scanDirection`, `detectorMode`, `roiMask`, `roiClipLeft`,
+`roiClipRight`, `thresholds`, `frameRange`, `frames`, `shockX_raw`, `shockX_clean`,
+`rxnX_raw`, `rxnX_clean`, `valid`. The `*_raw`/`*_clean` matrices are
+`[numRows × N]` in pixels. `thresholds` includes `gradSpan` (1D mode) and also
+the band + prior params (`magThreshFrac`, `intensitySigma`, `deadband`, `minArea`,
+`gaussSigma`, `useShockPrior`, `useRxnPrior`, `searchHalfWidth`, `deviationTol`,
+`nTuningFrames`) when `detectorMode='band2d'`. **Downstream code reads this file**
+— treat field names and shapes as a stable contract; if you change them, note it
+prominently (it's a breaking change for any analysis script that loads the `.mat`).
 
 ## Where to make common changes
 
-- **Detection algorithm / gradient logic** → `detect_fronts_in_frame.m`. Add a
+- **2D band detection algorithm** → `detect_bands_in_frame.m`. Add a test in
+  `tests/test_detect_bands_in_frame.m` first (see TDD below).
+- **ROI computation** → `auto_roi_mask.m` (+ its test in `tests/test_auto_roi_mask.m`).
+- **Temporal prior logic** → `temporal_prior_refine.m` (+ its test in
+  `tests/test_temporal_prior_refine.m`).
+- **1D detection algorithm / gradient logic** → `detect_fronts_in_frame.m`. Add a
   test in `tests/test_detect_fronts_in_frame.m` first (see TDD below).
 - **Outlier/smoothing behavior** → `clean_front_line.m` (+ its test).
 - **New tunable parameter** → add to the `USER SETTINGS` block in
   `auto_detect_shock_reaction.m`, thread it into the `params` struct (if used by
-  `detect_fronts_in_frame`) and into the tuning `inputdlg`, and record it in
-  `Detection.thresholds`.
-- **GUI behavior (calibration, scrubbing, background selection, validation)** →
-  `setup_detection_gui.m`. Nested `createCrossHair`/`updateCrossHair` were adapted
-  from `wave_speed_gui_v16.m`.
+  `detect_bands_in_frame`/`detect_fronts_in_frame`) and into the tuning
+  `inputdlg`, and record it in `Detection.thresholds`.
+- **GUI behavior (calibration, scrubbing, background selection, detector dropdown,
+  ROI controls, validation)** → `setup_detection_gui.m`. Nested
+  `createCrossHair`/`updateCrossHair` were adapted from `wave_speed_gui_v16.m`.
 - **Plot styling / overlay** → `overlay_fronts.m` (shared by the preview and the
   montage — change once, both update).
 - **`.dat` format** → `load_dat_video.m`. Overridable `fmt` constants
@@ -126,6 +152,10 @@ since they can't be exercised headless.
 
 ## Gotchas
 
+- The temporal prior is applied **in the batch run only**, not in the tuning
+  preview, so tuning shows raw per-frame behavior. This is intentional: the prior
+  needs a preceding cleaned frame, which isn't available during single-frame
+  preview.
 - `scanSmoothWin > 1` only denoises — it does **not** reduce threshold effective
   magnitude, because thresholds are step heights (not point gradients). Tests use
   `scanSmoothWin = 1` for exact, deterministic edge positions.

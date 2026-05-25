@@ -41,9 +41,17 @@ Detection = auto_detect_shock_reaction;
      wall** of the chamber (a green crosshair guides you). A dialog then asks for
      the **actual chamber width in inches**. This sets the pixel scale *and* the
      vertical range over which detection runs (full chamber height).
+   - **Detector** dropdown — choose the detection algorithm: **2D bands**
+     (default) or **1D step-height** (legacy). See "How detection works" below.
    - **Set Background** — scrub to a clean pre-detonation frame and click
      **Set Background**. That frame is subtracted (linearly) from every frame
-     before detection, removing fixed-pattern noise and background glow.
+     before detection, removing fixed-pattern noise and background glow. In
+     **2D bands** mode the ROI is also auto-detected at this point and shown
+     as **green vertical lines** at the left/right boundaries of the active
+     region.
+   - **Set ROI Left** / **Set ROI Right** — optional override buttons to
+     manually pin the left or right ROI boundary (overrides the auto-detected
+     value). The green boundary lines update immediately.
    - **Set Start** / **Set End** — scrub with Prev/Next/±10 and mark the first
      and last frames to process.
    - **DONE** when all four are set.
@@ -55,8 +63,17 @@ Detection = auto_detect_shock_reaction;
 
 ## How detection works
 
-Detection runs on the **background-subtracted** image (`frame − backgroundFrame`,
-linear 16-bit signed double). For each row across the calibrated chamber height,
+Detection always runs on the **background-subtracted** image (`frame − backgroundFrame`,
+linear 16-bit signed double).
+
+**2D bands (default).** Compute the gradient magnitude of the background-subtracted
+frame; the strong-edge pixels inside the ROI are split into a *dark-inside* band
+(shock, red) and a *bright-inside* band (reaction, cyan) by a smoothed intensity.
+Each row's interface is the **leading band pixel in the scan direction**. A
+**temporal prior** uses the cleaned previous-frame curve to rescue rows where the
+local edge is weak (applied to the shock by default; toggleable per front).
+
+**1D step-height (legacy).** For each row across the calibrated chamber height,
 the tool scans the background-subtracted intensity profile from the leading edge
 backward:
 
@@ -92,6 +109,16 @@ block:
 | `ySmoothWin` | Smoothing window along the chamber height for the cleaned curve. |
 | `minValidFrac` | Fraction of rows that must yield a shock for a frame to be flagged "valid". |
 | `nOverlayFrames` | Number of frames shown in the review montage. |
+| `magThreshFrac` | Fraction of the max gradient magnitude used as the strong-edge threshold (2D bands). |
+| `intensitySigma` | Gaussian blur sigma (pixels) applied before the dark/bright split (2D bands). |
+| `deadband` | Minimum pixel gap between shock and reaction band assignments (2D bands). |
+| `minArea` | Minimum connected-component area (pixels) to keep a band (2D bands). |
+| `gaussSigma` | Gaussian sigma for the gradient magnitude computation (2D bands). |
+| `useShockPrior` | Use the temporal prior for the shock front (default: `true`). |
+| `useRxnPrior` | Use the temporal prior for the reaction front (default: `false`). |
+| `searchHalfWidth` | Half-width (pixels) of the search window around the prior prediction. |
+| `deviationTol` | Maximum allowed deviation (pixels) from the prior before falling back to raw detection. |
+| `nTuningFrames` | Number of frames averaged in the multi-frame tuning preview (default: 6). |
 
 If the preview shows blank or wrong fronts: lower `shockThresh`/`rxnThresh`, or
 lower `whiteLevel` if the reaction front isn't detected. Because units are raw
@@ -110,7 +137,11 @@ as your data when tuning.
   | `calibration` | `chamberWidth_in`, `pixelHeight`, `mperpix`, `yTop`, `yBottom`, `yPixels`, `calibFrame` |
   | `propagationDirection` | `'LtoR'` or `'RtoL'` |
   | `scanDirection` | `+1` (L→R scan) or `−1` (R→L scan) |
-  | `thresholds` | all detection/cleanup parameters used, including `gradSpan` |
+  | `detectorMode` | `'band2d'` (default) or `'step1d'` — which algorithm was used |
+  | `roiMask` | logical mask (`[height × width]`) of the active detection ROI (2D bands) |
+  | `roiClipLeft` | left x-boundary (pixels) of the ROI |
+  | `roiClipRight` | right x-boundary (pixels) of the ROI |
+  | `thresholds` | all detection/cleanup parameters used, including `gradSpan`; also includes band + prior params when `detectorMode='band2d'` |
   | `frameRange` | `[startFrame endFrame]` |
   | `frames` | processed frame indices (1×N) |
   | `shockX_raw`, `shockX_clean` | shock front x-positions, pixels, `[numRows × N]` |
@@ -129,8 +160,12 @@ as your data when tuning.
 | `auto_detect_shock_reaction.m` | Main entry point — run this. |
 | `load_dat_video.m` | Reads the raw `.dat` into a frame source struct (`src`). |
 | `dat_frame.m` | Returns one frame from `src` as a 2-D double array. |
-| `setup_detection_gui.m` | Setup window: direction, width calibration, background selection, frame range. |
-| `detect_fronts_in_frame.m` | Per-row shock/reaction detection (pure function). |
+| `setup_detection_gui.m` | Setup window: direction, detector mode dropdown, ROI controls, width calibration, background selection, frame range. |
+| `detect_fronts_in_frame.m` | Per-row shock/reaction detection — 1D step-height algorithm (pure function). |
+| `detect_bands_in_frame.m` | Per-row shock/reaction detection — 2D gradient-band algorithm (pure function). |
+| `auto_roi_mask.m` | Computes the auto-detected ROI mask and clip boundaries from a background-subtracted frame (pure function). |
+| `temporal_prior_refine.m` | Refines a raw front curve using the cleaned previous-frame curve as a temporal prior (pure function). |
+| `edge_map_2d.m` | Computes the gradient magnitude map used by the 2D band detector (pure function). |
 | `clean_front_line.m` | Outlier rejection + smoothing of a front curve (pure function). |
 | `overlay_fronts.m` | Draws the red/cyan front overlay. |
 | `tests/` | Unit tests for the pure functions. |
@@ -142,7 +177,7 @@ as your data when tuning.
 matlab -batch "addpath(pwd); r = runtests('tests'); disp(r); assert(all([r.Passed]))"
 ```
 
-All 12 tests should pass.
+All 29 tests should pass.
 
 ## Notes & limitations
 
