@@ -118,7 +118,7 @@ block:
 | `useRxnPrior` | Use the temporal prior for the reaction front (default: `false`). |
 | `searchHalfWidth` | Half-width (pixels) of the search window around the prior prediction. |
 | `deviationTol` | Maximum allowed deviation (pixels) from the prior before falling back to raw detection. |
-| `nTuningFrames` | Number of frames averaged in the multi-frame tuning preview (default: 6). |
+| `nTuningFrames` | Number of frames shown independently in the multi-frame tuning preview montage (default: 6). |
 
 If the preview shows blank or wrong fronts: lower `shockThresh`/`rxnThresh`, or
 lower `whiteLevel` if the reaction front isn't detected. Because units are raw
@@ -163,7 +163,7 @@ as your data when tuning.
 | `setup_detection_gui.m` | Setup window: direction, detector mode dropdown, ROI controls, width calibration, background selection, frame range. |
 | `detect_fronts_in_frame.m` | Per-row shock/reaction detection — 1D step-height algorithm (pure function). |
 | `detect_bands_in_frame.m` | Per-row shock/reaction detection — 2D gradient-band algorithm (pure function). |
-| `auto_roi_mask.m` | Computes the auto-detected ROI mask and clip boundaries from a background-subtracted frame (pure function). |
+| `auto_roi_mask.m` | Computes the auto-detected ROI mask and clip boundaries from the raw background frame via Otsu thresholding (pure function). |
 | `temporal_prior_refine.m` | Refines a raw front curve using the cleaned previous-frame curve as a temporal prior (pure function). |
 | `edge_map_2d.m` | Computes the gradient magnitude map used by the 2D band detector (pure function). |
 | `clean_front_line.m` | Outlier rejection + smoothing of a front curve (pure function). |
