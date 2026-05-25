@@ -1,11 +1,11 @@
 function setup = setup_detection_gui(src, defaultFrame)
-%SETUP_DETECTION_GUI Collect direction, width calibration, background, frame range.
-%   src          : frame source from load_dat_video (fields Width/Height/NumFrames)
-%   defaultFrame : frame to show initially (default: middle frame)
-%   setup        : struct, or [] if cancelled. Fields:
+%SETUP_DETECTION_GUI Direction, detector mode, calibration, background, ROI, frame range.
+%   setup fields (or [] if cancelled):
 %     propagationDirection ('LtoR'|'RtoL'), scanDir (+1|-1),
-%     calibFrame, yTop, yBottom, pixelHeight, yRows, chamberWidth_in,
-%     mperpix, backgroundFrame, startFrame, endFrame
+%     detectorMode ('band2d'|'step1d'),
+%     calibFrame, yTop, yBottom, pixelHeight, yRows, chamberWidth_in, mperpix,
+%     backgroundFrame, roiMask (HxW logical), roiClipLeft, roiClipRight,
+%     startFrame, endFrame
     setup = [];
     totalFrames = src.NumFrames;
     if nargin < 2 || isempty(defaultFrame)
@@ -13,51 +13,58 @@ function setup = setup_detection_gui(src, defaultFrame)
     end
     frameNumber = max(1, min(defaultFrame, totalFrames));
 
-    % --- state shared with callbacks ---
     yTop = []; yBottom = []; calibFrame = [];
     startFrame = []; endFrame = []; chamberWidth_in = []; backIdx = [];
-    calibMode = false; calibClicks = [];
+    roiAuto = []; roiClipLeft = []; roiClipRight = [];
+    calibMode = false; calibClicks = []; roiPickMode = '';
     doneFlag = false; cancelled = false;
-    hCalibLines = gobjects(0);
+    hCalibLines = gobjects(0); hRoiLines = gobjects(0);
 
     hFig = figure('Name','Detection Setup','NumberTitle','off', ...
         'WindowState','maximized','Color','w','CloseRequestFcn',@cbClose);
-    hAx = axes('Parent',hFig,'Units','normalized','Position',[0.02 0.20 0.96 0.78]);
+    hAx = axes('Parent',hFig,'Units','normalized','Position',[0.02 0.22 0.96 0.76]);
     axis(hAx,'off');
     hImg = imshow(dat_frame(src,frameNumber), [], 'Parent', hAx);
     hold(hAx,'on');
 
-    % green full-screen crosshair cursor
     set(hFig,'Pointer','custom','PointerShapeCData',NaN(16,16),'PointerShapeHotSpot',[8 8]);
     crossHair = createCrossHair(hFig);
     set(hFig,'WindowButtonMotionFcn', @(s,e) updateCrossHair(hFig, crossHair));
 
     uicontrol(hFig,'Style','text','String','Direction:','Units','normalized', ...
-        'Position',[0.02 0.115 0.07 0.035],'BackgroundColor','w','FontSize',10);
+        'Position',[0.02 0.135 0.07 0.035],'BackgroundColor','w','FontSize',10);
     hDir = uicontrol(hFig,'Style','popupmenu','String',{'Left to Right','Right to Left'}, ...
-        'Units','normalized','Position',[0.09 0.115 0.14 0.045],'FontSize',10);
+        'Units','normalized','Position',[0.09 0.135 0.12 0.045],'FontSize',10);
+    uicontrol(hFig,'Style','text','String','Detector:','Units','normalized', ...
+        'Position',[0.23 0.135 0.07 0.035],'BackgroundColor','w','FontSize',10);
+    hMode = uicontrol(hFig,'Style','popupmenu','String',{'2D bands','1D step-height'}, ...
+        'Units','normalized','Position',[0.30 0.135 0.12 0.045],'FontSize',10);
 
     uicontrol(hFig,'Style','pushbutton','String','< Prev','Units','normalized', ...
-        'Position',[0.02 0.04 0.06 0.05],'Callback',@(s,e) changeFrame(-1));
+        'Position',[0.02 0.06 0.05 0.05],'Callback',@(s,e) changeFrame(-1));
     uicontrol(hFig,'Style','pushbutton','String','Next >','Units','normalized', ...
-        'Position',[0.09 0.04 0.06 0.05],'Callback',@(s,e) changeFrame(1));
+        'Position',[0.08 0.06 0.05 0.05],'Callback',@(s,e) changeFrame(1));
     uicontrol(hFig,'Style','pushbutton','String','<< -10','Units','normalized', ...
-        'Position',[0.16 0.04 0.06 0.05],'Callback',@(s,e) changeFrame(-10));
+        'Position',[0.14 0.06 0.05 0.05],'Callback',@(s,e) changeFrame(-10));
     uicontrol(hFig,'Style','pushbutton','String','+10 >>','Units','normalized', ...
-        'Position',[0.23 0.04 0.06 0.05],'Callback',@(s,e) changeFrame(10));
+        'Position',[0.20 0.06 0.05 0.05],'Callback',@(s,e) changeFrame(10));
     uicontrol(hFig,'Style','pushbutton','String','Set Start','Units','normalized', ...
-        'Position',[0.34 0.04 0.075 0.05],'Callback',@cbSetStart);
+        'Position',[0.27 0.06 0.07 0.05],'Callback',@cbSetStart);
     uicontrol(hFig,'Style','pushbutton','String','Set End','Units','normalized', ...
-        'Position',[0.42 0.04 0.075 0.05],'Callback',@cbSetEnd);
+        'Position',[0.35 0.06 0.07 0.05],'Callback',@cbSetEnd);
     uicontrol(hFig,'Style','pushbutton','String','Set Background','Units','normalized', ...
-        'Position',[0.50 0.04 0.10 0.05],'Callback',@cbSetBackground);
-    uicontrol(hFig,'Style','pushbutton','String','Calibrate Width (2 clicks)', ...
-        'Units','normalized','Position',[0.61 0.04 0.16 0.05],'Callback',@cbCalibrate);
+        'Position',[0.43 0.06 0.10 0.05],'Callback',@cbSetBackground);
+    uicontrol(hFig,'Style','pushbutton','String','Calibrate Width','Units','normalized', ...
+        'Position',[0.54 0.06 0.10 0.05],'Callback',@cbCalibrate);
+    uicontrol(hFig,'Style','pushbutton','String','Set ROI Left','Units','normalized', ...
+        'Position',[0.65 0.06 0.09 0.05],'Callback',@(s,e) cbSetRoi('left'));
+    uicontrol(hFig,'Style','pushbutton','String','Set ROI Right','Units','normalized', ...
+        'Position',[0.75 0.06 0.09 0.05],'Callback',@(s,e) cbSetRoi('right'));
     uicontrol(hFig,'Style','pushbutton','String','DONE','Units','normalized', ...
-        'Position',[0.86 0.04 0.10 0.05],'FontWeight','bold','Callback',@cbDone);
+        'Position',[0.86 0.06 0.10 0.05],'FontWeight','bold','Callback',@cbDone);
 
     hStatus = uicontrol(hFig,'Style','text','Units','normalized', ...
-        'Position',[0.34 0.105 0.62 0.04],'BackgroundColor','w','FontSize',9, ...
+        'Position',[0.02 0.005 0.94 0.045],'BackgroundColor','w','FontSize',9, ...
         'HorizontalAlignment','left','String','');
 
     set(hImg,'ButtonDownFcn',@cbClick,'HitTest','on','PickableParts','all');
@@ -76,6 +83,11 @@ function setup = setup_detection_gui(src, defaultFrame)
     else
         setup.propagationDirection = 'RtoL'; setup.scanDir = +1;
     end
+    if get(hMode,'Value') == 1
+        setup.detectorMode = 'band2d';
+    else
+        setup.detectorMode = 'step1d';
+    end
     setup.calibFrame      = calibFrame;
     setup.yTop            = min(yTop, yBottom);
     setup.yBottom         = max(yTop, yBottom);
@@ -87,10 +99,14 @@ function setup = setup_detection_gui(src, defaultFrame)
     setup.backgroundFrame = backIdx;
     setup.startFrame      = startFrame;
     setup.endFrame        = endFrame;
+    colMask = false(1, src.Width);
+    colMask(round(roiClipLeft):round(roiClipRight)) = true;
+    setup.roiMask = roiAuto & repmat(colMask, src.Height, 1);
+    setup.roiClipLeft  = round(roiClipLeft);
+    setup.roiClipRight = round(roiClipRight);
 
     if ishandle(hFig), delete(hFig); end
 
-    % ---------- nested callbacks ----------
     function changeFrame(d)
         frameNumber = max(1, min(totalFrames, frameNumber + d));
         fr = dat_frame(src, frameNumber);
@@ -103,40 +119,85 @@ function setup = setup_detection_gui(src, defaultFrame)
     end
     function cbSetStart(~,~), startFrame = frameNumber; refreshStatus(); end
     function cbSetEnd(~,~),   endFrame   = frameNumber; refreshStatus(); end
-    function cbSetBackground(~,~), backIdx = frameNumber; refreshStatus(); end
+    function cbSetBackground(~,~)
+        backIdx = frameNumber;
+        backRef = dat_frame(src, backIdx);
+        try
+            roiAuto = auto_roi_mask(backRef);
+        catch
+            roiAuto = true(src.Height, src.Width);
+        end
+        cols = find(any(roiAuto, 1));
+        if isempty(cols)
+            roiClipLeft = 1; roiClipRight = src.Width;
+            roiAuto = true(src.Height, src.Width);
+        else
+            roiClipLeft = cols(1); roiClipRight = cols(end);
+        end
+        drawRoiLines();
+        refreshStatus();
+    end
     function cbCalibrate(~,~)
-        calibMode = true; calibClicks = [];
+        calibMode = true; roiPickMode = ''; calibClicks = [];
         delete(hCalibLines(ishandle(hCalibLines))); hCalibLines = gobjects(0);
         set(hStatus,'String','CALIBRATE: click the TOP wall, then the BOTTOM wall.');
     end
+    function cbSetRoi(side)
+        if isempty(roiAuto)
+            set(hStatus,'String','ERROR: Set Background first (auto-ROI needs it).'); return;
+        end
+        calibMode = false; roiPickMode = side;
+        set(hStatus,'String', sprintf('Click a column to set the ROI %s boundary.', side));
+    end
     function cbClick(~,~)
-        if ~calibMode, return; end
         if ~strcmp(get(hFig,'SelectionType'),'normal'), return; end
-        cp = get(hAx,'CurrentPoint');
-        yClick = cp(1,2);
-        calibClicks(end+1) = yClick; %#ok<AGROW>
-        hCalibLines(end+1) = plot(hAx, get(hAx,'XLim'), [yClick yClick], ...
-            'y-', 'LineWidth', 1.2, 'HitTest','off','PickableParts','none'); %#ok<AGROW>
-        if numel(calibClicks) == 2
-            yTop = calibClicks(1); yBottom = calibClicks(2);
-            calibFrame = frameNumber;
-            answer = inputdlg('Actual chamber width (inches):','Chamber Width', ...
-                [1 40], {'2'});
-            if isempty(answer)
-                w = NaN;
-            else
-                w = str2double(answer{1});
+        if calibMode
+            cp = get(hAx,'CurrentPoint'); yClick = cp(1,2);
+            calibClicks(end+1) = yClick; %#ok<AGROW>
+            hCalibLines(end+1) = plot(hAx, get(hAx,'XLim'), [yClick yClick], ...
+                'y-', 'LineWidth', 1.2, 'HitTest','off','PickableParts','none'); %#ok<AGROW>
+            if numel(calibClicks) == 2
+                yTop = calibClicks(1); yBottom = calibClicks(2);
+                calibFrame = frameNumber;
+                answer = inputdlg('Actual chamber width (inches):','Chamber Width', ...
+                    [1 40], {'2'});
+                if isempty(answer), w = NaN; else, w = str2double(answer{1}); end
+                if ~isfinite(w) || w <= 0
+                    yTop=[]; yBottom=[]; calibFrame=[];
+                    delete(hCalibLines(ishandle(hCalibLines))); hCalibLines = gobjects(0);
+                    set(hStatus,'String','Calibration cancelled — click Calibrate again.');
+                else
+                    chamberWidth_in = w;
+                end
+                calibMode = false;
+                refreshStatus();
             end
-            if ~isfinite(w) || w <= 0
-                yTop = []; yBottom = []; calibFrame = [];
-                delete(hCalibLines(ishandle(hCalibLines))); hCalibLines = gobjects(0);
-                set(hStatus,'String','Calibration cancelled — click Calibrate again.');
+            return;
+        end
+        if ~isempty(roiPickMode)
+            cp = get(hAx,'CurrentPoint');
+            xClick = max(1, min(src.Width, round(cp(1,1))));
+            if strcmp(roiPickMode,'left')
+                roiClipLeft = xClick;
             else
-                chamberWidth_in = w;
+                roiClipRight = xClick;
             end
-            calibMode = false;
+            if roiClipLeft > roiClipRight
+                tmp = roiClipLeft; roiClipLeft = roiClipRight; roiClipRight = tmp;
+            end
+            roiPickMode = '';
+            drawRoiLines();
             refreshStatus();
         end
+    end
+    function drawRoiLines()
+        delete(hRoiLines(ishandle(hRoiLines))); hRoiLines = gobjects(0);
+        if isempty(roiClipLeft) || isempty(roiClipRight), return; end
+        yl = get(hAx,'YLim');
+        hRoiLines(end+1) = plot(hAx, [roiClipLeft roiClipLeft], yl, ...
+            'g-', 'LineWidth', 1.2, 'HitTest','off','PickableParts','none'); %#ok<AGROW>
+        hRoiLines(end+1) = plot(hAx, [roiClipRight roiClipRight], yl, ...
+            'g-', 'LineWidth', 1.2, 'HitTest','off','PickableParts','none'); %#ok<AGROW>
     end
     function cbDone(~,~)
         if isempty(yTop) || isempty(chamberWidth_in)
@@ -147,6 +208,9 @@ function setup = setup_detection_gui(src, defaultFrame)
         end
         if isempty(backIdx)
             set(hStatus,'String','ERROR: set a background frame first.'); return;
+        end
+        if isempty(roiAuto) || isempty(roiClipLeft) || isempty(roiClipRight)
+            set(hStatus,'String','ERROR: ROI not set (re-Set Background).'); return;
         end
         if isempty(startFrame) || isempty(endFrame)
             set(hStatus,'String','ERROR: set start and end frames.'); return;
@@ -159,13 +223,13 @@ function setup = setup_detection_gui(src, defaultFrame)
     function cbClose(~,~), cancelled = true; doneFlag = false; uiresume(hFig); end
     function refreshStatus()
         set(hStatus,'String', sprintf( ...
-            ['Frame %d/%d  |  Start: %s  End: %s  Bg: %s  |  ' ...
-             'yTop: %s  yBot: %s  Width(in): %s'], ...
-            frameNumber, totalFrames, num2str(startFrame), num2str(endFrame), ...
-            num2str(backIdx), num2str(yTop), num2str(yBottom), num2str(chamberWidth_in)));
+            ['Frame %d/%d  |  Start: %s  End: %s  Bg: %s  |  yTop: %s yBot: %s  W(in): %s  ' ...
+             '|  ROI cols: [%s, %s]'], ...
+            frameNumber, totalFrames, num2str(startFrame), num2str(endFrame), num2str(backIdx), ...
+            num2str(yTop), num2str(yBottom), num2str(chamberWidth_in), ...
+            num2str(roiClipLeft), num2str(roiClipRight)));
     end
 
-    % ---------- crosshair helpers (adapted from wave_speed_gui_v16) ----------
     function ch = createCrossHair(fig)
         for k = 1:4
             ch(k) = uicontrol(fig,'Style','text','Visible','off','Units','pixels', ...
