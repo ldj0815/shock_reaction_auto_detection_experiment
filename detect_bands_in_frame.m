@@ -15,12 +15,17 @@ function [shockX, rxnX, shockMask, rxnMask] = detect_bands_in_frame( ...
 %                determines which connected segment of the band is "leading".
 %   roiMask    : HxW logical; only ROI pixels are eligible
 %   params     : magThreshFrac (default 0.95), intensitySigma (5),
-%                deadband (0), minArea (30)
+%                deadband (0), minArea (30),
+%                bandYSmoothWin (5) — odd window length for an NaN-preserving
+%                moving mean of the per-row centroid along y, applied after
+%                centroid extraction to damp row-to-row oscillation while
+%                leaving "not detected" rows (NaN) untouched. 1 disables.
     if nargin < 6 || isempty(params), params = struct(); end
     if ~isfield(params,'magThreshFrac') || isempty(params.magThreshFrac), params.magThreshFrac = 0.95; end
     if ~isfield(params,'intensitySigma') || isempty(params.intensitySigma), params.intensitySigma = 5; end
     if ~isfield(params,'deadband') || isempty(params.deadband), params.deadband = 0; end
     if ~isfield(params,'minArea')  || isempty(params.minArea),  params.minArea  = 30; end
+    if ~isfield(params,'bandYSmoothWin') || isempty(params.bandYSmoothWin), params.bandYSmoothWin = 5; end
 
     [H, W] = size(proc);
     n = numel(yRows);
@@ -50,6 +55,23 @@ function [shockX, rxnX, shockMask, rxnMask] = detect_bands_in_frame( ...
         shockX(i) = leadingCentroidX(shockMask(y, :), Gmag(y, :), scanDir);
         rxnX(i)   = leadingCentroidX(rxnMask(y, :),  Gmag(y, :), scanDir);
     end
+
+    if params.bandYSmoothWin > 1
+        shockX = smoothPreservingNaN(shockX, params.bandYSmoothWin);
+        rxnX   = smoothPreservingNaN(rxnX,   params.bandYSmoothWin);
+    end
+end
+
+function out = smoothPreservingNaN(x, win)
+%SMOOTHPRESERVINGNAN NaN-aware moving-mean along the first dimension.
+%   Rows that were NaN in the input remain NaN in the output (the "not
+%   detected" sentinel is preserved); other rows are averaged over a window
+%   of `win` rows, skipping any NaNs that fall in their window.
+    if win <= 1, out = x; return; end
+    nanMask = isnan(x);
+    sm = movmean(x(:), win, 'omitnan');
+    sm(nanMask(:)) = NaN;
+    out = reshape(sm, size(x));
 end
 
 function x = leadingCentroidX(maskRow, gmagRow, scanDir)

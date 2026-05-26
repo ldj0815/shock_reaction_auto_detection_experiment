@@ -61,3 +61,51 @@ function test_blank_frame_returns_all_nan(t)
     verifyTrue(t, all(isnan(sx)));
     verifyTrue(t, all(isnan(rx)));
 end
+
+function test_y_smoothing_dampens_row_jitter(t)
+    % Build a dark band whose column position alternates by ±1 pixel row-to-row:
+    % odd y → cols 32-52 (midpoint 42), even y → cols 30-50 (midpoint 40).
+    % Without smoothing, per-row centroids alternate 42/40. With bandYSmoothWin=5
+    % the interior rows collapse to ≈41 (within ±0.5).
+    H = 12; W = 80;
+    proc = zeros(H, W);
+    Gmag = zeros(H, W);
+    for y = 1:H
+        shift = 2 * mod(y, 2);   % odd → 2, even → 0
+        cols = (30 + shift):(50 + shift);
+        proc(y, cols) = -100;
+        Gmag(y, cols) = 1;
+    end
+    roi = true(H, W);
+    yRows = 1:H;
+    base = struct('magThreshFrac', 0.0, 'intensitySigma', 0.5, ...
+                  'deadband', 0, 'minArea', 1);
+
+    raw = base; raw.bandYSmoothWin = 1;
+    [sx_raw, ~] = detect_bands_in_frame(proc, Gmag, yRows, +1, roi, raw);
+    verifyTrue(t, max(sx_raw) - min(sx_raw) > 1.5);   % real oscillation present
+
+    sm = base; sm.bandYSmoothWin = 5;
+    [sx_sm, ~] = detect_bands_in_frame(proc, Gmag, yRows, +1, roi, sm);
+    interior = sx_sm(3:H-2);
+    verifyTrue(t, all(abs(interior - 41) <= 0.5));    % oscillation damped
+end
+
+function test_y_smoothing_preserves_nan_rows(t)
+    % Rows with no band must stay NaN — smoothing must not invent positions
+    % at rows where detection failed.
+    H = 8; W = 60;
+    proc = zeros(H, W);
+    Gmag = zeros(H, W);
+    for y = 1:4
+        proc(y, 20:24) = -100;
+        Gmag(y, 20:24) = 1;
+    end
+    roi = true(H, W);
+    yRows = 1:H;
+    params = struct('magThreshFrac', 0.0, 'intensitySigma', 0.5, ...
+                    'deadband', 0, 'minArea', 1, 'bandYSmoothWin', 5);
+    [sx, ~] = detect_bands_in_frame(proc, Gmag, yRows, +1, roi, params);
+    verifyFalse(t, any(isnan(sx(1:4))));
+    verifyTrue(t,  all(isnan(sx(5:8))));
+end

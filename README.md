@@ -34,9 +34,9 @@ Detection = auto_detect_shock_reaction;
 1. **Pick the `.dat` file** in the file dialog.
 2. **Setup window** opens on the middle frame:
    - **Direction** dropdown — choose the detonation propagation direction
-     (`Left to Right` or `Right to Left`). Detection scans the *reverse* of
-     propagation, so the leading shock is found first and the reaction front
-     behind it.
+     (`Left to Right` or `Right to Left`, defaults to `Right to Left`).
+     Detection scans the *reverse* of propagation, so the leading shock is
+     found first and the reaction front behind it.
    - **Calibrate Width (2 clicks)** — click the **top wall**, then the **bottom
      wall** of the chamber (a green crosshair guides you). A dialog then asks for
      the **actual chamber width in inches**. This sets the pixel scale *and* the
@@ -69,9 +69,13 @@ linear 16-bit signed double).
 **2D bands (default).** Compute the gradient magnitude of the background-subtracted
 frame; the strong-edge pixels inside the ROI are split into a *dark-inside* band
 (shock, red) and a *bright-inside* band (reaction, cyan) by a smoothed intensity.
-Each row's interface is the **leading band pixel in the scan direction**. A
-**temporal prior** uses the cleaned previous-frame curve to rescue rows where the
-local edge is weak (applied to the shock by default; toggleable per front).
+Each row's interface is the **gradient-magnitude-weighted centroid of the leading
+connected band segment in the scan direction** — i.e. the centerline of the
+ridge, with any trailing same-class segment ignored. A small NaN-preserving
+along-y smoothing (`bandYSmoothWin`) damps row-to-row centroid jitter without
+inventing values at undetected rows. A **temporal prior** uses the cleaned
+previous-frame curve to rescue rows where the local edge is weak (applied to the
+shock by default; toggleable per front).
 
 **1D step-height (legacy).** For each row across the calibrated chamber height,
 the tool scans the background-subtracted intensity profile from the leading edge
@@ -113,6 +117,7 @@ block:
 | `intensitySigma` | Gaussian blur sigma (pixels) applied before the dark/bright split (2D bands). |
 | `deadband` | Minimum pixel gap between shock and reaction band assignments (2D bands). |
 | `minArea` | Minimum connected-component area (pixels) to keep a band (2D bands). |
+| `bandYSmoothWin` | Odd window length for an NaN-preserving moving-mean of the per-row centroid along y, applied inside the 2D band detector to damp row-to-row oscillation. `1` disables. Default 5. |
 | `gaussSigma` | Gaussian sigma for the gradient magnitude computation (2D bands). |
 | `useShockPrior` | Use the temporal prior for the shock front (default: `true`). |
 | `useRxnPrior` | Use the temporal prior for the reaction front (default: `false`). |
@@ -177,7 +182,7 @@ as your data when tuning.
 matlab -batch "addpath(pwd); r = runtests('tests'); disp(r); assert(all([r.Passed]))"
 ```
 
-All 29 tests should pass.
+All 32 tests should pass.
 
 ## Notes & limitations
 
