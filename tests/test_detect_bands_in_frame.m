@@ -9,7 +9,7 @@ function img = makeBandFrame()
     img(:, 70:90) = +100;   % bright band (reaction side)
 end
 
-function test_detects_band_leading_edges(t)
+function test_detects_band_centerlines(t)
     proc = makeBandFrame();
     [~, Gmag, ~] = edge_map_2d(proc, struct('gaussSigma', 1));
     H = size(proc, 1); W = size(proc, 2);
@@ -19,8 +19,26 @@ function test_detects_band_leading_edges(t)
     [sx, rx] = detect_bands_in_frame(proc, Gmag, yRows, +1, roi, params);
     verifyFalse(t, any(isnan(sx)));
     verifyFalse(t, any(isnan(rx)));
-    verifyTrue(t, all(abs(sx - 30) <= 3));   % shock = dark band leading edge
-    verifyTrue(t, all(abs(rx - 70) <= 3));   % reaction = bright band leading edge
+    verifyTrue(t, all(abs(sx - 30) <= 3));   % shock centerline near col 30 transition
+    verifyTrue(t, all(abs(rx - 70) <= 3));   % reaction centerline near col 70 transition
+end
+
+function test_centroid_is_gradient_weighted(t)
+    % Controlled centroid math: dark band cols 20-24 with linearly-increasing
+    % Gmag weights [1 2 4 8 16]. The detected x must equal the Gmag-weighted
+    % centroid, NOT the leading edge (which would be col 20).
+    H = 5; W = 50;
+    proc = zeros(H, W);
+    proc(:, 20:24) = -100;
+    Gmag = zeros(H, W);
+    Gmag(:, 20:24) = repmat([1 2 4 8 16], H, 1);
+    roi = true(H, W);
+    yRows = 1:H;
+    params = struct('magThreshFrac', 0.0, 'intensitySigma', 0.5, 'deadband', 0, 'minArea', 1);
+    [sx, ~] = detect_bands_in_frame(proc, Gmag, yRows, +1, roi, params);
+    expected = (20*1 + 21*2 + 22*4 + 23*8 + 24*16) / (1+2+4+8+16);   % 718/31 ≈ 23.16
+    verifyTrue(t, all(abs(sx - expected) < 0.5));
+    verifyFalse(t, any(abs(sx - 20) < 0.5));   % NOT the leading edge
 end
 
 function test_roi_blocks_bands_outside(t)
